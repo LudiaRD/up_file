@@ -3,17 +3,18 @@ import re
 import pandas as pd
 import streamlit as st
 
-st.set_page_config(page_title="CSV/Excel Viewer + NIK Cleaner", page_icon="🧹", layout="wide")
-st.title("🧹 CSV/Excel Viewer + NIK Cleaner (NIK 16 digit diawali '3')")
-
+st.set_page_config(page_title="CSV/Excel Viewer + NIK Cleaner & Comparator",
+                   page_icon="🧹", layout="wide")
+st.title("🧹 CSV/Excel Viewer + NIK Cleaner & Comparator")
 st.write(
-    "Upload file **CSV** atau **Excel (XLSX/XLS)**, pratinjau data, lalu bersihkan baris "
-    "berdasarkan **NIK KTP Indonesia** pada kolom *MemberNo* dan/atau *IdentityNo*. "
-    "Kriteria valid: **16 digit angka** dan **diawali angka '3'**."
+    "Upload **Data Awal** dan **Data Baru** (CSV/XLS/XLSX). "
+    "Aplikasi akan: (1) membersihkan NIK (16 digit, diawali '3') dari kolom *MemberNo* dan/atau *IdentityNo*, "
+    "(2) menampilkan data bersih, dan (3) membandingkan NIK unik antar kedua data untuk menghasilkan dua output:\n"
+    "- **NIK hanya di Data Baru** (tidak ada di Data Awal)\n"
+    "- **NIK hanya di Data Awal** (tidak ada di Data Baru)"
 )
 
-uploaded_file = st.file_uploader("Pilih file CSV/XLSX", type=["csv", "xlsx", "xls"])
-
+# ---------- Utilitas ----------
 def only_digits(s):
     """Ambil hanya digit (0-9) dari nilai apa pun."""
     if s is None or (isinstance(s, float) and pd.isna(s)):
@@ -28,141 +29,217 @@ def normalize_nik(val):
         return digits
     return None
 
-if uploaded_file is not None:
-    file_name = uploaded_file.name.lower()
-    use_header = st.checkbox("Baris pertama sebagai header", value=True)
-    nrows_preview = st.slider("Jumlah baris preview", min_value=5, max_value=200, value=50, step=5)
-
-    df = None
+def default_index_for(cols, target_lower: str) -> int:
+    """Cari index default untuk selectbox (dengan '<Tidak Ada>' di posisi 0)."""
+    lower_cols = [str(c).lower() for c in cols]
     try:
-        if file_name.endswith(".csv"):
-            delimiter = st.selectbox("Delimiter CSV", options=[",", ";", "\t", "|"], index=0, help="Pilih pemisah kolom")
-            encodings_to_try = ["utf-8", "utf-8-sig", "cp1252", "latin1"]
-            last_err = None
-            for enc in encodings_to_try:
-                try:
-                    uploaded_file.seek(0)
-                    df = pd.read_csv(uploaded_file, sep=delimiter, encoding=enc, header=0 if use_header else None)
-                    break
-                except Exception as e:
-                    last_err = e
-            if df is None and last_err:
-                st.error(f"Gagal membaca CSV. Error terakhir: {last_err}")
-                st.stop()
-        else:
+        return 1 + lower_cols.index(target_lower)  # +1 karena '<Tidak Ada>' di depan
+    except ValueError:
+        return 0
+
+def load_dataframe(uploaded_file, prefix_key: str, use_header_default=True):
+    """Baca CSV/XLS/XLSX dengan UI delimiter/sheet terpisah per file."""
+    if uploaded_file is None:
+        return None
+
+    name = uploaded_file.name.lower()
+    use_header = st.checkbox(f"[{prefix_key}] Baris pertama sebagai header",
+                             value=use_header_default, key=f"{prefix_key}_hdr")
+
+    if name.endswith(".csv"):
+        delimiter = st.selectbox(f"[{prefix_key}] Delimiter CSV",
+                                 options=[",", ";", "\t", "|"], index=0,
+                                 key=f"{prefix_key}_delim")
+        encodings = ["utf-8", "utf-8-sig", "cp1252", "latin1"]
+        last_err = None
+        df = None
+        for enc in encodings:
+            try:
+                uploaded_file.seek(0)
+                df = pd.read_csv(uploaded_file, sep=delimiter, encoding=enc,
+                                 header=0 if use_header else None)
+                break
+            except Exception as e:
+                last_err = e
+        if df is None and last_err:
+            st.error(f"[{prefix_key}] Gagal membaca CSV. Error terakhir: {last_err}")
+            return None
+        return df
+
+    elif name.endswith(".xlsx") or name.endswith(".xls"):
+        try:
             uploaded_file.seek(0)
             xl = pd.ExcelFile(uploaded_file)
-            sheet = st.selectbox("Pilih sheet", options=xl.sheet_names)
+            sheet = st.selectbox(f"[{prefix_key}] Pilih sheet", options=xl.sheet_names,
+                                 key=f"{prefix_key}_sheet")
             df = xl.parse(sheet_name=sheet, header=0 if use_header else None)
-    except Exception as e:
-        st.error(f"Terjadi error saat membaca file: {e}")
-        st.stop()
+            return df
+        except Exception as e:
+            st.error(f"[{prefix_key}] Gagal membaca Excel: {e}")
+            return None
+    else:
+        st.error(f"[{prefix_key}] Ekstensi file tidak didukung.")
+        return None
 
-    if df is not None:
-        st.success("File berhasil dibaca ✅")
-        c1, c2, c3 = st.columns(3)
-        with c1:
-            st.metric("Jumlah Baris", df.shape[0])
-        with c2:
-            st.metric("Jumlah Kolom", df.shape[1])
-        with c3:
-            st.write("**Tipe Data (ringkas)**")
-            st.caption(", ".join([f"{c}:{str(t)}" for c, t in zip(df.columns, df.dtypes)])[:250] + ("..." if len(df.columns) > 10 else ""))
+def clean_with_nik(df, prefix_key: str, title: str):
+    """Pilih kolom MemberNo/IdentityNo, bersihkan ke NIK valid, kembalikan df_clean + preview UI."""
+    if df is None:
+        return None
 
-        st.subheader("Preview Data (awal)")
-        st.dataframe(df.head(nrows_preview), use_container_width=True)
+    st.subheader(f"{title}")
+    st.caption("Baris dianggap valid jika **salah satu** kolom menghasilkan NIK yang valid "
+               "(16 digit, diawali '3'). Nilai non-digit dihapus sebelum validasi.")
+    st.dataframe(df.head(30), use_container_width=True)
 
-        # ---------- Bagian Pembersihan NIK ----------
-        st.subheader("🧽 Pembersihan berdasarkan NIK (16 digit, diawali '3')")
-        st.caption("Sistem akan menyaring baris yang memiliki NIK valid pada salah satu kolom yang dipilih. "
-                   "Nilai non-digit akan dihilangkan sebelum validasi (misal spasi/tanda baca).")
+    cols_display = ["<Tidak Ada>"] + [str(c) for c in df.columns]
+    member_idx = default_index_for(df.columns, "memberno")
+    identity_idx = default_index_for(df.columns, "identityno")
 
-        # Pilih kolom sumber (fallback bila nama berbeda)
-        cols_display = ["<Tidak Ada>"] + [str(c) for c in df.columns]
-        lower_cols = [str(c).lower() for c in df.columns]
+    member_col = st.selectbox(f"[{prefix_key}] Kolom MemberNo",
+                              options=cols_display, index=member_idx, key=f"{prefix_key}_member")
+    identity_col = st.selectbox(f"[{prefix_key}] Kolom IdentityNo",
+                                options=cols_display, index=identity_idx, key=f"{prefix_key}_identity")
 
-        def default_index_for(name_lower: str) -> int:
-            """Cari index default untuk selectbox (tambah 1 karena '<Tidak Ada>' di depan)."""
-            try:
-                return 1 + lower_cols.index(name_lower)
-            except ValueError:
-                return 0
+    do_clean = st.checkbox(f"[{prefix_key}] Aktifkan pembersihan NIK", value=True, key=f"{prefix_key}_clean")
+    drop_dup = st.checkbox(f"[{prefix_key}] Hapus duplikat berdasarkan NIK (setelah bersih)",
+                           value=True, key=f"{prefix_key}_dedup")
 
-        member_idx = default_index_for("memberno")
-        identity_idx = default_index_for("identityno")
+    if not do_clean or (member_col == "<Tidak Ada>" and identity_col == "<Tidak Ada>"):
+        st.info("Aktifkan pembersihan dan pilih minimal satu kolom (MemberNo/IdentityNo).")
+        return None
 
-        member_col = st.selectbox("Kolom MemberNo", options=cols_display, index=member_idx)
-        identity_col = st.selectbox("Kolom IdentityNo", options=cols_display, index=identity_idx)
+    work = df.copy()
 
-        do_clean = st.checkbox("Aktifkan pembersihan NIK", value=True)
+    # Hasil bersih per kolom
+    work["MemberNo_clean"] = work[member_col].apply(normalize_nik) if member_col != "<Tidak Ada>" else None
+    work["IdentityNo_clean"] = work[identity_col].apply(normalize_nik) if identity_col != "<Tidak Ada>" else None
 
-        if do_clean and (member_col != "<Tidak Ada>" or identity_col != "<Tidak Ada>"):
-            work = df.copy()
+    # Baris valid jika salah satu kolom *_clean tidak None
+    mask_valid = pd.Series(False, index=work.index)
+    if "MemberNo_clean" in work:
+        mask_valid = mask_valid | work["MemberNo_clean"].notna()
+    if "IdentityNo_clean" in work:
+        mask_valid = mask_valid | work["IdentityNo_clean"].notna()
 
-            if member_col != "<Tidak Ada>":
-                work["MemberNo_clean"] = work[member_col].apply(normalize_nik)
-            else:
-                work["MemberNo_clean"] = None
+    df_clean = work.loc[mask_valid].copy()
 
-            if identity_col != "<Tidak Ada>":
-                work["IdentityNo_clean"] = work[identity_col].apply(normalize_nik)
-            else:
-                work["IdentityNo_clean"] = None
+    # Kolom NIK final (prioritas MemberNo_clean, lalu IdentityNo_clean)
+    df_clean["NIK"] = df_clean.get("MemberNo_clean").combine_first(df_clean.get("IdentityNo_clean"))
 
-            # Baris valid jika salah satu kolom *_clean tidak None
-            mask_valid = work["MemberNo_clean"].notna() | work["IdentityNo_clean"].notna()
-            df_clean = work.loc[mask_valid].copy()
+    # Letakkan NIK di depan, sembunyikan *_clean
+    front_cols = ["NIK"]
+    other_cols = [c for c in df_clean.columns if c not in front_cols and not str(c).endswith("_clean")]
+    df_clean = df_clean[front_cols + other_cols]
 
-            # Kolom NIK final (prioritas MemberNo_clean, lalu IdentityNo_clean)
-            df_clean["NIK"] = df_clean["MemberNo_clean"].combine_first(df_clean["IdentityNo_clean"])
+    if drop_dup:
+        before = len(df_clean)
+        df_clean = df_clean.drop_duplicates(subset=["NIK"], keep="first")
+        removed_dups = before - len(df_clean)
+    else:
+        removed_dups = 0
 
-            kept = int(mask_valid.sum())
-            dropped = int(len(work) - kept)
-            c1c, c2c, c3c = st.columns(3)
-            with c1c:
-                st.metric("Baris Valid (kept)", kept)
-            with c2c:
-                st.metric("Baris Dibuang", dropped)
-            with c3c:
-                st.metric("Total Awal", len(work))
+    kept = len(df_clean)
+    dropped = int(len(work) - mask_valid.sum()) + removed_dups
+    c1, c2, c3 = st.columns(3)
+    c1.metric(f"[{prefix_key}] Baris Valid (kept)", kept)
+    c2.metric(f"[{prefix_key}] Baris Dibuang", dropped)
+    c3.metric(f"[{prefix_key}] Total Awal", len(work))
 
-            st.write("**Preview Data (SETELAH dibersihkan)**")
-            front_cols = ["NIK"]
-            other_cols = [c for c in df_clean.columns if c not in front_cols and not str(c).endswith("_clean")]
-            show_cols = front_cols + other_cols
-            st.dataframe(df_clean[show_cols].head(nrows_preview), use_container_width=True)
+    st.write(f"**Preview Data (SETELAH dibersihkan) – {prefix_key}**")
+    st.dataframe(df_clean.head(30), use_container_width=True)
 
-            # Unduh hasil
-            csv_bytes = df_clean.to_csv(index=False).encode("utf-8-sig")
-            st.download_button("⬇️ Download hasil bersih (CSV)", data=csv_bytes, file_name="cleaned_nik.csv", mime="text/csv")
+    # Unduh versi bersih (opsional)
+    csv_bytes = df_clean.to_csv(index=False).encode("utf-8-sig")
+    st.download_button(f"⬇️ Download {prefix_key} (bersih) - CSV",
+                       data=csv_bytes, file_name=f"{prefix_key.lower()}_cleaned.csv",
+                       mime="text/csv", key=f"{prefix_key}_dl_csv")
+    buf = io.BytesIO()
+    with pd.ExcelWriter(buf, engine="openpyxl") as writer:
+        df_clean.to_excel(writer, index=False, sheet_name="cleaned")
+    st.download_button(f"⬇️ Download {prefix_key} (bersih) - XLSX",
+                       data=buf.getvalue(), file_name=f"{prefix_key.lower()}_cleaned.xlsx",
+                       mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                       key=f"{prefix_key}_dl_xlsx")
 
-            buf = io.BytesIO()
-            with pd.ExcelWriter(buf, engine="openpyxl") as writer:
-                df_clean.to_excel(writer, index=False, sheet_name="cleaned")
-            st.download_button(
-                "⬇️ Download hasil bersih (XLSX)",
-                data=buf.getvalue(),
-                file_name="cleaned_nik.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
-        else:
-            st.info("Aktifkan pembersihan dan pilih minimal satu kolom (MemberNo/IdentityNo) untuk memfilter berdasarkan NIK.")
-        # ---------- /Pembersihan NIK ----------
+    return df_clean
 
-        with st.expander("🔎 Filter sederhana (opsional)"):
-            cols_f = st.multiselect("Pilih kolom untuk filter equals", [str(c) for c in df.columns])
-            filtered = df.copy()
-            for col in cols_f:
-                unique_vals = filtered[col].dropna().unique().tolist()
-                options = ["<kosong>"] + (unique_vals[:100] if len(unique_vals) > 100 else unique_vals)
-                val = st.selectbox(f"Nilai untuk kolom '{col}'", options=options, key=f"filter_{col}")
-                if val == "<kosong>":
-                    filtered = filtered[filtered[col].isna()]
-                else:
-                    filtered = filtered[filtered[col] == val]
-            st.dataframe(filtered.head(nrows_preview), use_container_width=True)
-            csv_filt = filtered.to_csv(index=False).encode("utf-8-sig")
-            st.download_button("⬇️ Download hasil filter (CSV)", data=csv_filt, file_name="filtered_output.csv", mime="text/csv")
+# ---------- Upload kedua file ----------
+st.markdown("### 1) Upload File")
+colA, colB = st.columns(2)
+with colA:
+    file_a = st.file_uploader("📂 Data Awal (CSV/XLS/XLSX)", type=["csv", "xlsx", "xls"], key="file_a")
+with colB:
+    file_b = st.file_uploader("📂 Data Baru (CSV/XLS/XLSX)", type=["csv", "xlsx", "xls"], key="file_b")
 
+df_a = load_dataframe(file_a, "DataAwal") if file_a else None
+df_b = load_dataframe(file_b, "DataBaru") if file_b else None
+
+if df_a is not None:
+    st.success("Data Awal berhasil dibaca ✅")
+if df_b is not None:
+    st.success("Data Baru berhasil dibaca ✅")
+
+# ---------- Bersihkan masing-masing ----------
+df_a_clean = clean_with_nik(df_a, "DataAwal", "2) Pembersihan NIK – Data Awal") if df_a is not None else None
+st.markdown("---")
+df_b_clean = clean_with_nik(df_b, "DataBaru", "3) Pembersihan NIK – Data Baru") if df_b is not None else None
+
+# ---------- Perbandingan ----------
+st.markdown("---")
+st.subheader("4) Perbandingan NIK antara Data Awal vs Data Baru")
+if df_a_clean is None or df_b_clean is None:
+    st.info("Unggah dan bersihkan **kedua** data terlebih dahulu untuk melakukan perbandingan.")
 else:
-    st.info("Belum ada file diunggah.")
+    # Set NIK
+    nik_a = set(df_a_clean["NIK"].dropna().astype(str).unique())
+    nik_b = set(df_b_clean["NIK"].dropna().astype(str).unique())
+
+    only_in_b = nik_b - nik_a  # NIK yang hanya ada di Data Baru
+    only_in_a = nik_a - nik_b  # NIK yang hanya ada di Data Awal
+
+    st.write("**Ringkasan:**")
+    c1, c2, c3 = st.columns(3)
+    c1.metric("NIK unik di Data Awal", len(nik_a))
+    c2.metric("NIK unik di Data Baru", len(nik_b))
+    c3.metric("NIK sama (irisan)", len(nik_a & nik_b))
+
+    # Data Baru TIDAK dimiliki Data Awal
+    st.markdown("#### ➕ NIK hanya di **Data Baru** (tidak ada di Data Awal)")
+    df_only_b = df_b_clean[df_b_clean["NIK"].isin(only_in_b)].copy()
+    # tampilkan NIK dulu
+    front_cols_b = ["NIK"]
+    other_cols_b = [c for c in df_only_b.columns if c not in front_cols_b]
+    df_only_b = df_only_b[front_cols_b + other_cols_b]
+    st.dataframe(df_only_b.head(50), use_container_width=True)
+
+    csv_b = df_only_b.to_csv(index=False).encode("utf-8-sig")
+    st.download_button("⬇️ Download NIK hanya di Data Baru (CSV)",
+                       data=csv_b, file_name="only_in_data_baru.csv",
+                       mime="text/csv", key="dl_only_b_csv")
+    buf_b = io.BytesIO()
+    with pd.ExcelWriter(buf_b, engine="openpyxl") as writer:
+        df_only_b.to_excel(writer, index=False, sheet_name="only_in_baru")
+    st.download_button("⬇️ Download NIK hanya di Data Baru (XLSX)",
+                       data=buf_b.getvalue(), file_name="only_in_data_baru.xlsx",
+                       mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                       key="dl_only_b_xlsx")
+
+    # Data Awal TIDAK dimiliki Data Baru
+    st.markdown("#### ➖ NIK hanya di **Data Awal** (tidak ada di Data Baru)")
+    df_only_a = df_a_clean[df_a_clean["NIK"].isin(only_in_a)].copy()
+    front_cols_a = ["NIK"]
+    other_cols_a = [c for c in df_only_a.columns if c not in front_cols_a]
+    df_only_a = df_only_a[front_cols_a + other_cols_a]
+    st.dataframe(df_only_a.head(50), use_container_width=True)
+
+    csv_a = df_only_a.to_csv(index=False).encode("utf-8-sig")
+    st.download_button("⬇️ Download NIK hanya di Data Awal (CSV)",
+                       data=csv_a, file_name="only_in_data_awal.csv",
+                       mime="text/csv", key="dl_only_a_csv")
+    buf_a = io.BytesIO()
+    with pd.ExcelWriter(buf_a, engine="openpyxl") as writer:
+        df_only_a.to_excel(writer, index=False, sheet_name="only_in_awal")
+    st.download_button("⬇️ Download NIK hanya di Data Awal (XLSX)",
+                       data=buf_a.getvalue(), file_name="only_in_data_awal.xlsx",
+                       mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                       key="dl_only_a_xlsx")
