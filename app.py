@@ -15,16 +15,15 @@ st.write(
 uploaded_file = st.file_uploader("Pilih file CSV/XLSX", type=["csv", "xlsx", "xls"])
 
 def only_digits(s):
+    """Ambil hanya digit (0-9) dari nilai apa pun."""
     if s is None or (isinstance(s, float) and pd.isna(s)):
         return ""
-    # cast angka/float -> string, hilangkan .0, whitespace, dan karakter non-digit
     s = str(s)
-    s = re.sub(r"[^0-9]", "", s)
-    return s
+    return re.sub(r"[^0-9]", "", s)
 
 def normalize_nik(val):
+    """Normalisasi ke NIK valid (16 digit dan mulai '3'); jika tidak valid -> None."""
     digits = only_digits(val)
-    # NIK valid: 16 digit dan mulai dengan '3'
     if len(digits) == 16 and digits.startswith("3"):
         return digits
     return None
@@ -35,7 +34,6 @@ if uploaded_file is not None:
     nrows_preview = st.slider("Jumlah baris preview", min_value=5, max_value=200, value=50, step=5)
 
     df = None
-
     try:
         if file_name.endswith(".csv"):
             delimiter = st.selectbox("Delimiter CSV", options=[",", ";", "\t", "|"], index=0, help="Pilih pemisah kolom")
@@ -43,13 +41,14 @@ if uploaded_file is not None:
             last_err = None
             for enc in encodings_to_try:
                 try:
+                    uploaded_file.seek(0)
                     df = pd.read_csv(uploaded_file, sep=delimiter, encoding=enc, header=0 if use_header else None)
                     break
                 except Exception as e:
                     last_err = e
-                    uploaded_file.seek(0)
             if df is None and last_err:
                 st.error(f"Gagal membaca CSV. Error terakhir: {last_err}")
+                st.stop()
         else:
             uploaded_file.seek(0)
             xl = pd.ExcelFile(uploaded_file)
@@ -68,7 +67,7 @@ if uploaded_file is not None:
             st.metric("Jumlah Kolom", df.shape[1])
         with c3:
             st.write("**Tipe Data (ringkas)**")
-            st.caption(", ".join([f"{c}:{str(t)}" for c, t in zip(df.columns, df.dtypes)])[:250] + ("..." if len(df.columns)>10 else ""))
+            st.caption(", ".join([f"{c}:{str(t)}" for c, t in zip(df.columns, df.dtypes)])[:250] + ("..." if len(df.columns) > 10 else ""))
 
         st.subheader("Preview Data (awal)")
         st.dataframe(df.head(nrows_preview), use_container_width=True)
@@ -79,22 +78,22 @@ if uploaded_file is not None:
                    "Nilai non-digit akan dihilangkan sebelum validasi (misal spasi/tanda baca).")
 
         # Pilih kolom sumber (fallback bila nama berbeda)
-        cols = ["<Tidak Ada>"] + df.columns.astype(str).tolist()
-        default_member = df.columns[df.columns.astype(str).str.lower().eq("memberno")]
-        default_identity = df.columns[df.columns.astype(str).str.lower().eq("identityno")]
+        cols_display = ["<Tidak Ada>"] + [str(c) for c in df.columns]
+        lower_cols = [str(c).lower() for c in df.columns]
 
-        member_col = st.selectbox(
-            "Kolom MemberNo",
-            options=cols,
-            index=(cols.index(default_member[0]) if len(default_member) > 0 else 0)
-        )
-        identity_col = st.selectbox(
-            "Kolom IdentityNo",
-            options=cols,
-            index=(cols.index(default_identity[0]) if len(default_identity) > 0 else 0)
-        )
+        def default_index_for(name_lower: str) -> int:
+            """Cari index default untuk selectbox (tambah 1 karena '<Tidak Ada>' di depan)."""
+            try:
+                return 1 + lower_cols.index(name_lower)
+            except ValueError:
+                return 0
 
-        # Proses pembersihan
+        member_idx = default_index_for("memberno")
+        identity_idx = default_index_for("identityno")
+
+        member_col = st.selectbox("Kolom MemberNo", options=cols_display, index=member_idx)
+        identity_col = st.selectbox("Kolom IdentityNo", options=cols_display, index=identity_idx)
+
         do_clean = st.checkbox("Aktifkan pembersihan NIK", value=True)
 
         if do_clean and (member_col != "<Tidak Ada>" or identity_col != "<Tidak Ada>"):
@@ -110,14 +109,13 @@ if uploaded_file is not None:
             else:
                 work["IdentityNo_clean"] = None
 
-            # baris valid jika salah satu kolom clean tidak None
+            # Baris valid jika salah satu kolom *_clean tidak None
             mask_valid = work["MemberNo_clean"].notna() | work["IdentityNo_clean"].notna()
             df_clean = work.loc[mask_valid].copy()
 
-            # kolom NIK final (prioritas MemberNo_clean baru IdentityNo_clean)
+            # Kolom NIK final (prioritas MemberNo_clean, lalu IdentityNo_clean)
             df_clean["NIK"] = df_clean["MemberNo_clean"].combine_first(df_clean["IdentityNo_clean"])
 
-            # metrik hasil
             kept = int(mask_valid.sum())
             dropped = int(len(work) - kept)
             c1c, c2c, c3c = st.columns(3)
@@ -129,9 +127,8 @@ if uploaded_file is not None:
                 st.metric("Total Awal", len(work))
 
             st.write("**Preview Data (SETELAH dibersihkan)**")
-            # tampilkan NIK di depan + kolom lainnya (tanpa *_clean)
             front_cols = ["NIK"]
-            other_cols = [c for c in df_clean.columns if c not in front_cols and not c.endswith("_clean")]
+            other_cols = [c for c in df_clean.columns if c not in front_cols and not str(c).endswith("_clean")]
             show_cols = front_cols + other_cols
             st.dataframe(df_clean[show_cols].head(nrows_preview), use_container_width=True)
 
@@ -148,17 +145,15 @@ if uploaded_file is not None:
                 file_name="cleaned_nik.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
-
         else:
             st.info("Aktifkan pembersihan dan pilih minimal satu kolom (MemberNo/IdentityNo) untuk memfilter berdasarkan NIK.")
         # ---------- /Pembersihan NIK ----------
 
         with st.expander("🔎 Filter sederhana (opsional)"):
-            cols_f = st.multiselect("Pilih kolom untuk filter equals", df.columns.astype(str).tolist())
+            cols_f = st.multiselect("Pilih kolom untuk filter equals", [str(c) for c in df.columns])
             filtered = df.copy()
             for col in cols_f:
                 unique_vals = filtered[col].dropna().unique().tolist()
-                # batasi opsi agar cepat
                 options = ["<kosong>"] + (unique_vals[:100] if len(unique_vals) > 100 else unique_vals)
                 val = st.selectbox(f"Nilai untuk kolom '{col}'", options=options, key=f"filter_{col}")
                 if val == "<kosong>":
