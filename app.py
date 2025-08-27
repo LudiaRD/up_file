@@ -5,12 +5,20 @@ import streamlit as st
 
 st.set_page_config(page_title = "CSV/Excel Viewer + NIK Cleaner & Comparator", page_icon = "🧹", layout = "wide")
 st.title("🧹 CSV/Excel Viewer + NIK Cleaner & Comparator")
-st.write("Upload **Data Dispusipda** dan **Data Kab/Kota** (CSV/XLS/XLSX). "
-         "Aplikasi akan: (1) membersihkan NIK (16 digit, diawali '3') dari kolom *MemberNo* dan/atau *IdentityNo*, "
-         "(2) menampilkan data bersih, dan (3) membandingkan NIK unik antar kedua data untuk menghasilkan dua output:\n"
-         "- **NIK hanya di Data Kab/Kota** (tidak ada di Data Dispusipda)\n"
-         "- **NIK hanya di Data Dispusipda** (tidak ada di Data Kab/Kota)"
-        )
+st.markdown("""
+         **Upload Data Dispusipda dan Data Kab/Kota (CSV/XLS/XLSX). Aplikasi akan:**
+         (1) membersihkan NIK (16 digit, diawali '3') dari kolom *MemberNo* dan/atau *IdentityNo*,  
+         (2) menampilkan data bersih, dan  
+         (3) membandingkan NIK unik antar kedua data untuk menghasilkan dua output:
+         <div style="margin-left: 2em;">
+           <ul>
+             <li>NIK hanya di <strong>Data Kab/Kota</strong> (tidak ada di <strong>Data Dispusipda</strong>)</li>
+             <li>NIK hanya di <strong>Data Dispusipda</strong> (tidak ada di <strong>Data Kab/Kota</strong>)</li>
+           </ul>
+         </div>
+         """,
+             unsafe_allow_html = True,
+         )
 
 # ---------- Utilitas ----------
 def only_digits(s):
