@@ -7,6 +7,7 @@ st.set_page_config(page_title = "CSV/Excel Viewer + NIK Cleaner & Comparator", p
 st.title("🧹 CSV/Excel Viewer + NIK Cleaner & Comparator")
 st.markdown("""
          **Upload Data Dispusipda dan Data Kab/Kota (CSV/XLS/XLSX). Aplikasi akan:**
+         
          (1) membersihkan NIK (16 digit, diawali '3') dari kolom *MemberNo* dan/atau *IdentityNo*,  
          (2) menampilkan data bersih, dan  
          (3) membandingkan NIK unik antar kedua data untuk menghasilkan dua output:
