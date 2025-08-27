@@ -214,7 +214,7 @@ else:
     st.download_button("⬇️ Download NIK hanya di Data Kab/Kota (XLSX)", data = buf_b.getvalue(), file_name = "only_in_data_baru.xlsx", mime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", key = "dl_only_b_xlsx")
 
     # Data Dispusipda TIDAK dimiliki Data Kab/Kota
-    st.markdown("#### ➖ NIK hanya di **Data Dispusipda** (tidak ada di Data Kab/Kota)")
+    st.markdown("#### ➕ NIK hanya di **Data Dispusipda** (tidak ada di Data Kab/Kota)")
     df_only_a = df_a_clean[df_a_clean["NIK"].isin(only_in_a)].copy()
     front_cols_a = ["NIK"]
     other_cols_a = [c for c in df_only_a.columns if c not in front_cols_a]
