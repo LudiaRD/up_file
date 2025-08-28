@@ -11,7 +11,7 @@ st.markdown("""
          (1) membersihkan NIK (16 digit, diawali '3') dari kolom *MemberNo* dan/atau *IdentityNo*,  
          (2) menampilkan data bersih, dan  
          (3) membandingkan NIK unik antar kedua data untuk menghasilkan dua output:
-         <div style="margin-left: 2em;">
+         <div style = "margin-left: 2em;">
            <ul>
              <li>NIK hanya di <strong>Data Kab/Kota</strong> (tidak ada di <strong>Data Dispusipda</strong>)</li>
              <li>NIK hanya di <strong>Data Dispusipda</strong> (tidak ada di <strong>Data Kab/Kota</strong>)</li>
@@ -219,7 +219,7 @@ else:
     front_cols_a = ["NIK"]
     other_cols_a = [c for c in df_only_a.columns if c not in front_cols_a]
     df_only_a = df_only_a[front_cols_a + other_cols_a]
-    st.dataframe(df_only_a.head(50), use_container_width=True)
+    st.dataframe(df_only_a.head(50), use_container_width = True)
 
     csv_a = df_only_a.to_csv(index = False).encode("utf-8-sig")
     st.download_button("⬇️ Download NIK hanya di Data Dispusipda (CSV)", data = csv_a, file_name = "only_in_data_dispusipda.csv", mime = "text/csv", key = "dl_only_a_csv")
@@ -227,3 +227,15 @@ else:
     with pd.ExcelWriter(buf_a, engine = "openpyxl") as writer:
         df_only_a.to_excel(writer, index = False, sheet_name = "only_in_dispusipda")
     st.download_button("⬇️ Download NIK hanya di Data Dispusipda (XLSX)", data = buf_a.getvalue(), file_name = "only_in_data_dispusipda.xlsx", mime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", key = "dl_only_a_xlsx")
+
+# ---------- Watermark/Copyright ----------
+st.markdown(
+    """
+    <style>
+      .footer-fixed {position: fixed; left: 0; right: 0; bottom: 0; text-align: center; font-size: 12px; padding: 10px 16px; color: #6b7280; background: rgba(0,0,0,0.04); border-top: 1px solid rgba(0,0,0,0.08); z-index: 9999;}
+    </style>
+    <div class = "footer-fixed">© 2025 Tim IT Dispusipda Jabar</div>
+    """,
+    unsafe_allow_html = True,
+)
+st.markdown("<div style = 'height: 60px'></div>", unsafe_allow_html = True)  # spacer
